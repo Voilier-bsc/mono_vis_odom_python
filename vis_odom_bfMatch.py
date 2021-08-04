@@ -4,6 +4,8 @@ import numpy as np
 import math
 import sys
 import types
+import operator
+
 
 orb = cv2.cv2.ORB_create(
                         nfeatures=3000,
@@ -199,6 +201,10 @@ if __name__ == "__main__":
 
     traj = np.zeros((1000,2000),dtype=np.uint8)
     traj = cv2.cvtColor(traj,cv2.COLOR_GRAY2BGR)
+
+    rmse_total = 0
+    rmse_seg_total = 0
+
     
     for numFrame in range(2, MAX_FRAME):
         filename = '/media/cordin/새 볼륨/rosbag/dataset/sequences/02/image_0/{0:06d}.png'.format(numFrame)
@@ -272,6 +278,21 @@ if __name__ == "__main__":
         t_f_seg = t_f_seg + abs_scale*R_f_seg.dot(t_seg)
         R_f_seg = R_seg.dot(R_f_seg)
 
+
+        error = map(operator.sub,t_gt,t_f)
+        error_seg = map(operator.sub,t_gt,t_f_seg)
+
+        error_sum_square = sum(map(lambda x:x*x,error))
+        error_sum_square_seg = sum(map(lambda x:x*x,error_seg))
+
+        rmse = math.sqrt(error_sum_square/3)
+        rmse_seg = math.sqrt(error_sum_square_seg/3)
+
+        rmse_total = rmse_total + rmse
+        rmse_seg_total = rmse_seg_total + rmse_seg
+
+        print("rmse     = ",rmse_total/numFrame)
+        print("rmse seg = ",rmse_seg_total/numFrame)
 
         prevImage = currImage
         kp_prev = kp_curr
