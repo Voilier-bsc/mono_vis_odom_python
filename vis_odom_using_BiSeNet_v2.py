@@ -349,4 +349,4 @@ if __name__ == "__main__":
 
         cv2.waitKey(1)
     
-    cv2.imwrite("result.png",traj)
+    cv2.imwrite("result_using_BiSeNet_v2.png",traj)
