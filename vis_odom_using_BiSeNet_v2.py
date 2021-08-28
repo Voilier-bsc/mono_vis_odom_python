@@ -7,8 +7,22 @@ import types
 import operator
 
 
+sys.path.insert(0, '/home/cordin/mono_vis_odom_python')
+
+import torch
+import torch.nn as nn
+
+import lib.transform_cv2 as T
+from lib.models import model_factory
+from configs import set_cfg_from_file
+
+torch.set_grad_enabled(False)
+np.random.seed(123)
+
+
+## orb 및 bf matcher 선언
 orb = cv2.cv2.ORB_create(
-                        nfeatures=3000,
+                        nfeatures=5000,
                         scaleFactor=1.2,
                         nlevels=8,
                         edgeThreshold=31,
@@ -21,19 +35,6 @@ orb = cv2.cv2.ORB_create(
 
 bf = cv2.BFMatcher(cv2.NORM_HAMMING)
 
-
-import torch
-import torch.nn as nn
-
-sys.path.insert(0, '/home/cordin/Vis_odom_python')
-
-import lib.transform_cv2 as T
-from lib.models import model_factory
-from configs import set_cfg_from_file
-
-
-torch.set_grad_enabled(False)
-np.random.seed(123)
 
 mapping = { 
         0: 19,
@@ -60,34 +61,34 @@ mapping = {
     }
 
 args = types.SimpleNamespace()
-args.config             = '/home/cordin/Vis_odom_python/configs/bisenetv2_city.py'
-args.weight_path        = '/home/cordin/Vis_odom_python/model_final_v2_city.pth'
+args.config             = '/home/cordin/mono_vis_odom_python/configs/bisenetv2_city.py'
+args.weight_path        = '/home/cordin/mono_vis_odom_python/model_final_v2_city.pth'
 
 cfg = set_cfg_from_file(args.config)
 palette = np.random.randint(0, 256, (256, 3), dtype=np.uint8)
 
-
-# define model
+## define model
 net = model_factory[cfg.model_type](cfg.n_cats, aux_mode='pred')
 net.load_state_dict(torch.load(args.weight_path, map_location='cpu'), strict=False)
 net.eval()
 net.cuda()
 
-# prepare data
+## prepare data
 to_tensor = T.ToTensor(
     mean=(0.3257, 0.3690, 0.3223), # city, rgb
     std=(0.2112, 0.2148, 0.2115),
 )
 
+##dynamic object라고 판단되는 class 들을 0으로 masking
 def encode_labels(mask):
     label_mask = np.zeros_like(mask)
     for k in mapping:
         label_mask[mask == k] = mapping[k]
     return label_mask
 
-def getScale(NumFrame, t_gt):
+def getScale(NumFrame, t_gt, seq_num):
 
-    txt_file = open('/media/cordin/새 볼륨/rosbag/dataset/poses/02.txt')
+    txt_file = open('/media/cordin/새 볼륨/rosbag/dataset/poses/{0:02d}.txt'.format(seq_num))
     
     x_prev = float(t_gt[0])
     y_prev = float(t_gt[1])
@@ -111,8 +112,10 @@ def getScale(NumFrame, t_gt):
 
 
 if __name__ == "__main__":
-    MAX_FRAME = 4541
-    
+    MAX_FRAME = 2000
+    SEQ_NUM = 2
+
+    # Camera intrinsic parameter    
     focal = 718.8560
     pp = (607.1928, 185.2157)
 
@@ -120,34 +123,40 @@ if __name__ == "__main__":
     textOrg2 = (10,80)
     textOrg3 = (10,130)
 
-    img_1_c = cv2.imread("/media/cordin/새 볼륨/rosbag/dataset/sequences/02/image_0/000000.png")
-    img_2_c = cv2.imread("/media/cordin/새 볼륨/rosbag/dataset/sequences/02/image_0/000001.png")
+    img_1_c = cv2.imread("/media/cordin/새 볼륨/rosbag/dataset/sequences/{0:02d}/image_0/000000.png".format(SEQ_NUM))
+    img_2_c = cv2.imread("/media/cordin/새 볼륨/rosbag/dataset/sequences/{0:02d}/image_0/000001.png".format(SEQ_NUM))
 
     img_1 = cv2.cvtColor(img_1_c,cv2.COLOR_BGR2GRAY)
     img_2 = cv2.cvtColor(img_2_c,cv2.COLOR_BGR2GRAY)
 
+
+    # 이미지 캔버스 생성
+    base_img1 = np.zeros((1024,2048,3),dtype=np.uint8)
+    base_img1[324:700,404:1645,:] = img_1_c
+    base_img2 = np.zeros((1024,2048,3),dtype=np.uint8)
+    base_img2[324:700,404:1645,:] = img_2_c
+
     # inference
-    im = cv2.resize(img_1_c,(640,480))
-    im = im[:, :, ::-1]       
-    im = to_tensor(dict(im=im, lb=None))['im'].unsqueeze(0).cuda()
+    im1 = base_img1[:, :, ::-1]       
+    im1 = to_tensor(dict(im=im1, lb=None))['im'].unsqueeze(0).cuda()
+    im2 = base_img2[:, :, ::-1]       
+    im2 = to_tensor(dict(im=im2, lb=None))['im'].unsqueeze(0).cuda()
 
-    out = net(im).squeeze().detach().cpu().numpy()
-
-    pred = np.where(out==0,19,out)
-    pred = palette[pred]
-    out = encode_labels(out)
-    pred_dynamic = palette[out]
+    out1 = net(im1).squeeze().detach().cpu().numpy()
+    out1 = encode_labels(out1)
+    out2 = net(im2).squeeze().detach().cpu().numpy()
+    out2 = encode_labels(out1)
     
-    base_mask = np.array(out, dtype=np.uint8) 
-    base_mask = cv2.resize(base_mask,(1241,376))
+    base_mask1 = np.array(out1, dtype=np.uint8) 
+    base_mask2 = np.array(out2, dtype=np.uint8) 
     ####
 
 
     kp1, des1 = orb.detectAndCompute(img_1,None)
     kp2, des2 = orb.detectAndCompute(img_2,None)
 
-    kp1_seg, des1_seg = orb.detectAndCompute(img_1,base_mask)
-    kp2_seg, des2_seg = orb.detectAndCompute(img_2,base_mask)
+    kp1_seg, des1_seg = orb.detectAndCompute(img_1,base_mask1)
+    kp2_seg, des2_seg = orb.detectAndCompute(img_2,base_mask2)
 
 
     matches = bf.match(des1,des2)
@@ -181,14 +190,11 @@ if __name__ == "__main__":
     pts2_seg = np.array(pts2_seg)
 
 
-    pts1 = np.array(pts1)
-    pts2 = np.array(pts2)
-
     E, mask = cv2.findEssentialMat(pts1,pts2,focal = focal, pp = pp, method=cv2.RANSAC, prob = 0.999, threshold=1.0)
     _, R_f, t_f, _ = cv2.recoverPose(E, pts1, pts2, focal = focal, pp = pp)
 
-    R_f_seg = R_f
-    t_f_seg = t_f
+    E_seg, mask_seg = cv2.findEssentialMat(pts1_seg,pts2_seg,focal = focal, pp = pp, method=cv2.RANSAC, prob = 0.999, threshold=1.0)
+    _, R_f_seg, t_f_seg, _ = cv2.recoverPose(E_seg, pts1, pts2, focal = focal, pp = pp)
 
     t_gt = np.zeros((3,1),dtype=np.float64)
 
@@ -207,31 +213,32 @@ if __name__ == "__main__":
 
     
     for numFrame in range(2, MAX_FRAME):
-        filename = '/media/cordin/새 볼륨/rosbag/dataset/sequences/02/image_0/{0:06d}.png'.format(numFrame)
+        filename = '/media/cordin/새 볼륨/rosbag/dataset/sequences/{0:02d}/image_0/{1:06d}.png'.format(SEQ_NUM,numFrame)
+
         currImage_c = cv2.imread(filename)
-
-
         currImage = cv2.cvtColor(currImage_c,cv2.COLOR_BGR2GRAY)
 
+        # 이미지 캔버스 생성
+        base_img = np.zeros((1024,2048,3),dtype=np.uint8)
+        base_img[324:700,404:1645,:] = currImage_c
+
         # inference
-        im = cv2.resize(currImage_c,(640,480))
-        im = im[:, :, ::-1]       
+        im = base_img[:, :, ::-1]
         im = to_tensor(dict(im=im, lb=None))['im'].unsqueeze(0).cuda()
 
         out = net(im).squeeze().detach().cpu().numpy()
-
-        pred = np.where(out==0,19,out)
-        pred = palette[pred]
+        out = out[324:700,404:1645]
         out = encode_labels(out)
+
         pred_dynamic = palette[out]
-        
         base_mask = np.array(out, dtype=np.uint8) 
-        base_mask = cv2.resize(base_mask,(1241,376))
-        ####
 
+
+        # feature extraction
         kp_curr, des_curr = orb.detectAndCompute(currImage,None)
-        kp_curr_seg, des_curr_seg = orb.detectAndCompute(currImage,base_mask)
+        kp_curr_seg, des_curr_seg = orb.detectAndCompute(currImage,base_mask) # base_mask를 제외한 영역에서 feature 추출
 
+        # feature matching
         matches = bf.match(des_prev,des_curr)
         matches_seg = bf.match(des_prev_seg,des_curr_seg)
 
@@ -264,21 +271,24 @@ if __name__ == "__main__":
         pts1_seg = np.array(pts1_seg)
         pts2_seg = np.array(pts2_seg)
 
+        # caculate R, t
         E_mat, mask_n = cv2.findEssentialMat(pts2, pts1, focal = focal, pp = pp, method=cv2.RANSAC, prob = 0.999, threshold=1.0)
         _, R, t, _ = cv2.recoverPose(E_mat, pts2, pts1, focal = focal, pp = pp)
 
         E_seg, mask_seg = cv2.findEssentialMat(pts2_seg, pts1_seg, focal = focal, pp = pp, method=cv2.RANSAC, prob = 0.999, threshold=1.0)
         _, R_seg, t_seg, _ = cv2.recoverPose(E_seg, pts2_seg, pts1_seg, focal = focal, pp = pp)
         
-        abs_scale, t_gt = getScale(numFrame, t_gt)
+        # get scale
+        abs_scale, t_gt = getScale(numFrame, t_gt, SEQ_NUM)
         
+        # update trajectory
         t_f = t_f + abs_scale*R_f.dot(t)
         R_f = R.dot(R_f)
 
         t_f_seg = t_f_seg + abs_scale*R_f_seg.dot(t_seg)
         R_f_seg = R_seg.dot(R_f_seg)
 
-
+        # caculate Error
         error = map(operator.sub,t_gt,t_f)
         error_seg = map(operator.sub,t_gt,t_f_seg)
 
@@ -301,14 +311,16 @@ if __name__ == "__main__":
         kp_prev_seg = kp_curr_seg
         des_prev_seg = des_curr_seg
 
-        # x_gt = int(t_gt[0]) + 500
-        # y_gt = int(t_gt[2]) + 300
 
-        # x = int(t_f[0]) + 500
-        # y = int(t_f[2]) + 300
+        # x_gt = int(t_gt[0]) + 100
+        # y_gt = int(t_gt[2]) + 900
 
-        # x_seg = int(t_f_seg[0]) + 500
-        # y_seg = int(t_f_seg[2]) + 300
+        # x = int(t_f[0]) + 100
+        # y = int(t_f[2]) + 900
+
+        # x_seg = int(t_f_seg[0]) + 100
+        # y_seg = int(t_f_seg[2]) + 900
+
 
         x_gt = int(t_gt[0]) + 1000
         y_gt = int(t_gt[2]) + 100
@@ -349,4 +361,4 @@ if __name__ == "__main__":
 
         cv2.waitKey(1)
     
-    cv2.imwrite("result_using_BiSeNet_v2.png",traj)
+    cv2.imwrite("result_using_BiSeNet_v2_{0:02d}.png".format(SEQ_NUM),traj)

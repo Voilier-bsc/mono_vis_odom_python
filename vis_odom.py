@@ -8,7 +8,7 @@ import operator
 
 ## orb 및 bf matcher 선언
 orb = cv2.cv2.ORB_create(
-                        nfeatures=3000,
+                        nfeatures=5000,
                         scaleFactor=1.2,
                         nlevels=8,
                         edgeThreshold=31,
@@ -22,9 +22,9 @@ orb = cv2.cv2.ORB_create(
 bf = cv2.BFMatcher(cv2.NORM_HAMMING)
 
 
-def getScale(NumFrame, t_gt):
+def getScale(NumFrame, t_gt, seq_num):
 
-    txt_file = open('/media/cordin/새 볼륨/rosbag/dataset/poses/02.txt')
+    txt_file = open('/media/cordin/새 볼륨/rosbag/dataset/poses/{0:02d}.txt'.format(seq_num))
     
     x_prev = float(t_gt[0])
     y_prev = float(t_gt[1])
@@ -48,8 +48,9 @@ def getScale(NumFrame, t_gt):
 
 
 if __name__ == "__main__":
-    MAX_FRAME = 4541
-    
+    MAX_FRAME = 1000
+    SEQ_NUM = 2
+
     #Camera intrinsic parameter
     focal = 718.8560
     pp = (607.1928, 185.2157)
@@ -58,9 +59,8 @@ if __name__ == "__main__":
     textOrg2 = (10,80)
     textOrg3 = (10,130)
 
-    img_1_c = cv2.imread("/media/cordin/새 볼륨/rosbag/dataset/sequences/02/image_0/000000.png")
-    img_2_c = cv2.imread("/media/cordin/새 볼륨/rosbag/dataset/sequences/02/image_0/000001.png")
-
+    img_1_c = cv2.imread("/media/cordin/새 볼륨/rosbag/dataset/sequences/{0:02d}/image_0/000000.png".format(SEQ_NUM))
+    img_2_c = cv2.imread("/media/cordin/새 볼륨/rosbag/dataset/sequences/{0:02d}/image_0/000001.png".format(SEQ_NUM))
     img_1 = cv2.cvtColor(img_1_c,cv2.COLOR_BGR2GRAY)
     img_2 = cv2.cvtColor(img_2_c,cv2.COLOR_BGR2GRAY)
 
@@ -70,7 +70,7 @@ if __name__ == "__main__":
     matches = bf.match(des1,des2)
     matches = sorted(matches, key = lambda x:x.distance)
 
-    idx = matches[0:1000]
+    idx = matches[0:1500]
 
     pts1 = []
     pts2 = []
@@ -100,9 +100,8 @@ if __name__ == "__main__":
 
     rmse_total = 0
     
-    for numFrame in range(2, 2000):
-        filename = '/media/cordin/새 볼륨/rosbag/dataset/sequences/02/image_0/{0:06d}.png'.format(numFrame)
-        
+    for numFrame in range(2, MAX_FRAME):
+        filename = '/media/cordin/새 볼륨/rosbag/dataset/sequences/{0:02d}/image_0/{1:06d}.png'.format(SEQ_NUM,numFrame)
         
         currImage_c = cv2.imread(filename)
         currImage = cv2.cvtColor(currImage_c,cv2.COLOR_BGR2GRAY)
@@ -113,7 +112,7 @@ if __name__ == "__main__":
         # feature matching
         matches = bf.match(des_prev,des_curr)
         matches = sorted(matches, key = lambda x:x.distance)
-        idx = matches[0:3000]
+        idx = matches[0:1500]
 
         pts1 = []
         pts2 = []
@@ -130,7 +129,7 @@ if __name__ == "__main__":
         _, R, t, _ = cv2.recoverPose(E_mat, pts2, pts1, focal = focal, pp = pp)
 
         # get scale
-        abs_scale, t_gt = getScale(numFrame, t_gt)
+        abs_scale, t_gt = getScale(numFrame, t_gt, SEQ_NUM)
         
         # update trajectory
         t_f = t_f + abs_scale*R_f.dot(t)
@@ -173,4 +172,4 @@ if __name__ == "__main__":
 
         cv2.waitKey(1)
     
-    cv2.imwrite("result_02.png",traj)
+    cv2.imwrite("result_{0:02d}.png".format(SEQ_NUM),traj)
